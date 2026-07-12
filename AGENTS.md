@@ -1,178 +1,69 @@
-# AGENTS.md
+# Agent guidance
 
-This file provides guidance to AI coding agents when working with code in this repository.
+This repository publishes the Agent Client Protocol registry. Each top-level
+agent directory contains an `agent.json` manifest and a 16 by 16 monochrome
+`icon.svg`. Treat `agent.schema.json` and the validation scripts as the
+authoritative format contract.
 
-## Build Commands
+## Validate changes
 
-```bash
-# Build registry (validates all agents and outputs to dist/)
-uv run --with jsonschema .github/workflows/build_registry.py
+Run the narrow checks first, then the complete workflow suite:
 
-# Dry run (validate without writing to dist/)
+```sh
 uv run --with jsonschema .github/workflows/build_registry.py --dry-run
-
-# Build without schema validation (if jsonschema not available)
-python .github/workflows/build_registry.py
+cd .github/workflows
+uv run --with ruff ruff check .
+uv run --with ruff ruff format --check .
+uv run --with pytest pytest tests/ -v
 ```
 
-## Testing & Linting
+The Docker wrapper reproduces CI dependencies and architecture more closely:
 
-```bash
-# Run workflow tests in the Dockerized local environment (recommended)
+```sh
 .github/workflows/scripts/run-workflows-tests.sh
-
-# Run workflow tests natively on the host (CI-style debugging only)
-cd .github/workflows && uv run --with pytest pytest tests/ -v
-
-# Lint check
-cd .github/workflows && uv run --with ruff ruff check .
-
-# Format check
-cd .github/workflows && uv run --with ruff ruff format --check .
-
-# Auto-fix formatting
-cd .github/workflows && uv run --with ruff ruff format .
+.github/workflows/scripts/run-registry-docker.sh \
+  uv run --with jsonschema .github/workflows/build_registry.py
 ```
 
-## Docker Validation
+Use `.github/workflows/scripts/run-protocol-matrix.sh` only when agent runtime
+or authentication behavior changes. It creates isolated state by default.
+Set `ACP_PROTOCOL_MATRIX_KEEP_STATE=1` only for intentional debugging.
 
-GitHub Actions runs the nightly protocol matrix natively on the runner (`uv` + Node.js installed in the workflow), but local verification can still use Docker to keep downloads, caches, and auth-related state isolated from your host machine:
+## Update versions
 
-```bash
-# Run workflow tests in the Dockerized local environment
-.github/workflows/scripts/run-workflows-tests.sh
+Use the updater instead of editing distribution URLs independently:
 
-# Validate schema/build output in a container
-.github/workflows/scripts/run-registry-docker.sh uv run --with jsonschema .github/workflows/build_registry.py
-
-# Verify registered agents in a container
-.github/workflows/scripts/run-registry-docker.sh python3 .github/workflows/verify_agents.py --auth-check
-
-# Generate the protocol feature matrix in a container
-.github/workflows/scripts/run-protocol-matrix.sh
-
-# Generate a capabilities-only matrix table in a container
-.github/workflows/scripts/run-protocol-matrix.sh --table-mode capabilities
-
-# Reuse unchanged agent versions from the previous snapshot
-.github/workflows/scripts/run-protocol-matrix.sh --table-mode capabilities --changed-only
+```sh
+uv run .github/workflows/update_versions.py --agents harn
+uv run .github/workflows/update_versions.py --apply --agents harn
+uv run --with jsonschema .github/workflows/build_registry.py --dry-run
 ```
 
-`run-protocol-matrix.sh` mirrors the scheduled GitHub Actions defaults: it uses `--table-mode capabilities` and creates ephemeral isolated Docker state plus a fresh protocol sandbox by default so agents cannot reuse local login/keychain state or stale install artifacts across runs. Set `ACP_PROTOCOL_MATRIX_KEEP_STATE=1` if you intentionally want to keep the container state and `.matrix-sandbox` for debugging.
+The scheduled workflow checks releases hourly. GitHub binary updates require a
+GitHub `repository` URL; npm and PyPI packages use their registries. Entries in
+`quarantine.json` are intentionally excluded until their recorded failure is
+resolved.
 
-The generic Docker wrapper keeps state under `.docker-state/` in the repo, defaults to `linux/amd64` to match `ubuntu-latest`, injects a passwd entry for the current UID inside the container, and disables Python keyring backends to avoid host keychain prompts during local verification. It reuses an existing local Docker image when the requested platform and image inputs still match, and rebuilds automatically when they do not; set `ACP_REGISTRY_BUILD_IMAGE=1` to force a rebuild. Treat the Docker wrappers as the canonical local path; use host-native `uv run ...` commands only when you intentionally want to debug outside the container. Set `ACP_REGISTRY_DOCKER_PLATFORM=` to opt out of the default platform override when you explicitly want native-architecture debugging.
-Set `ACP_PROTOCOL_MATRIX_SKIP_AGENTS=crow-cli` to skip specific agents during matrix generation.
+## Registry rules
 
-## Architecture
+- Directory names and manifest `id` values use lowercase letters, digits, and
+  hyphens and must match.
+- `version` uses semantic versioning.
+- Every manifest provides at least one `binary`, `npx`, or `uvx`
+  distribution.
+- Binary archives use a supported archive format or a raw executable. The
+  validator rejects installers such as DMG, PKG, DEB, RPM, MSI, and AppImage.
+- Icons are 16 by 16 SVGs using `currentColor`; do not add fixed colors.
+- Agents must return at least one `agent` or `terminal` authentication method
+  during ACP initialization. See [AUTHENTICATION.md](./AUTHENTICATION.md).
 
-This is a registry of ACP (Agent Client Protocol) agents. The structure is:
+Set `SKIP_URL_VALIDATION=1` only for an offline diagnostic run. Do not use it
+as evidence that a registry change is ready to merge.
 
-```
-<id>/
-├── agent.json      # Agent metadata and distribution info
-└── icon.svg        # Icon: 16x16 SVG, monochrome with currentColor (required)
-```
+## Publication
 
-**Build process** (`.github/workflows/build_registry.py`):
-
-1. Scans directories for `agent.json` files
-2. Validates against `agent.schema.json` (JSON Schema)
-3. Validates icons (16x16 SVG, monochrome with `currentColor`)
-4. Aggregates into `dist/registry.json`
-5. Copies icons to `dist/<id>.svg`
-
-**CI/CD** (`.github/workflows/build-registry.yml`):
-
-- PRs: Runs validation only
-- Push to main: Validates, then publishes versioned + `latest` GitHub releases
-
-## Validation Rules
-
-- `id`: lowercase, hyphens only, must match directory name
-- `version`: semantic versioning (e.g., `1.0.0`)
-- `distribution`: at least one of `binary`, `npx`, `uvx`
-- `binary` distribution: builds for all operating systems (darwin, linux, windows) are recommended; missing OS families produce a warning
-- `binary` archives must use supported formats (`.zip`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`, or raw binaries); installer formats (`.dmg`, `.pkg`, `.deb`, `.rpm`, `.msi`, `.appimage`) are rejected
-- `icon.svg`: must be SVG format, 16x16, monochrome using `currentColor` (enables theming)
-- **URL validation**: All distribution URLs must be accessible (binary archives, npm/PyPI packages)
-
-Set `SKIP_URL_VALIDATION=1` to bypass URL checks during local development.
-
-## Updating Agent Versions
-
-### Automated Updates
-
-Agent versions are automatically updated via `.github/workflows/update-versions.yml`:
-
-- **Schedule:** Runs hourly (cron: `0 * * * *`)
-- **Scope:** Checks all agents in the root directory
-- **Supported distributions:** `npx` (npm), `uvx` (PyPI), `binary` (GitHub releases only — non-GitHub `repository` URLs are skipped)
-
-```bash
-# Dry run - check for available updates
-uv run .github/workflows/update_versions.py
-
-# Apply updates locally
-uv run .github/workflows/update_versions.py --apply
-
-# Check specific agents only
-uv run .github/workflows/update_versions.py --agents gemini,github-copilot
-```
-
-The workflow can also be triggered manually via GitHub Actions with options to apply updates and filter by agent IDs.
-
-### Manual Updates
-
-To update agents manually:
-
-1. **For npm packages** (`npx` distribution): Check latest version at `https://registry.npmjs.org/<package>/latest`
-2. **For GitHub binaries** (`binary` distribution): Check latest release at `https://api.github.com/repos/<owner>/<repo>/releases/latest`. Note: automated version checking only works for agents with a GitHub `repository` URL. Proprietary agents with non-GitHub or missing `repository` URLs must be updated manually.
-
-Update `agent.json`:
-
-- Update the `version` field
-- Update version in all distribution URLs (use replace-all for consistency)
-- For npm: update `package` field (e.g., `@google/gemini-cli@0.22.5`)
-- For binaries: update archive URLs with new version/tag
-
-Run build to validate: `uv run --with jsonschema .github/workflows/build_registry.py`
-
-## Distribution Types
-
-- `binary`: Platform-specific archives (`darwin-aarch64`, `linux-x86_64`, etc.). Supported archive formats: `.zip`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`, or raw binaries. Supporting all operating systems (darwin, linux, windows) is recommended.
-- `npx`: npm packages (cross-platform by default)
-- `uvx`: PyPI packages (cross-platform by default)
-
-## Icon Requirements
-
-Icons must be:
-
-- **SVG format** (only `.svg` files accepted)
-- **16x16 dimensions** (via width/height attributes or viewBox)
-- **Monochrome using `currentColor`** - all fills and strokes must use `currentColor` or `none`
-
-Using `currentColor` enables icons to adapt to different themes (light/dark mode) automatically.
-
-**Valid example:**
-
-```svg
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <path fill="currentColor" d="M..."/>
-</svg>
-```
-
-**Invalid patterns:**
-
-- Hardcoded colors: `fill="#FF5500"`, `fill="red"`, `stroke="rgb(0,0,0)"`
-- Missing currentColor: `fill` or `stroke` without `currentColor`
-
-## Authentication Validation
-
-Agents must support ACP authentication. The CI verifies auth via `.github/workflows/verify_agents.py --auth-check`.
-
-**Requirements:**
-
-- Return `authMethods` array in `initialize` response
-- At least one method must have type `"agent"` or `"terminal"`
-
-See [AUTHENTICATION.md](AUTHENTICATION.md) for details on implementing auth methods.
+Pull requests validate the registry. Changes on `main` run
+`.github/workflows/build-registry.yml`, which publishes versioned and `latest`
+registry releases. The version updater stages only expected `agent.json`
+files, verifies them, pushes the commit, and explicitly dispatches the build
+workflow.

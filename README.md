@@ -1,10 +1,10 @@
-# ACP Registry
+# ACP registry
 
 https://agentclientprotocol.com/registry
 
 Registry of agents implementing the [Agent Client Protocol, ACP](https://github.com/agentclientprotocol/agent-client-protocol).
 
-> **Authentication Required**: This registry maintains a curated list of **agents that support user authentication**.
+> **Authentication required**: This registry maintains a curated list of **agents that support user authentication**.
 >
 > Users must be able to authenticate themselves with agents to use them.
 > All agents are verified via CI to ensure they return valid `authMethods` in the ACP handshake.
@@ -18,15 +18,15 @@ Fetch the registry index:
 https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json
 ```
 
-## Registry Format
+## Registry format
 
 See [FORMAT.md](FORMAT.md) for the registry schema, distribution types, and platform targets.
 
-## Automatic Version Updates
+## Automatic version updates
 
 Agent versions are automatically updated via a cron job that runs hourly. It checks for new releases across all supported distribution types (npm, PyPI, GitHub releases) and commits updates directly to `main`.
 
-## Adding an Agent
+## Adding an agent
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for instructions.
 
