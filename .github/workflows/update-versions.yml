@@ -83,45 +83,11 @@ jobs:
     needs: check-versions
     if: failure()
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
     steps:
-      - name: Create failure issue
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        with:
-          script: |
-            const title = `Version check failed - ${new Date().toISOString().split('T')[0]}`;
-            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-
-            // Check if issue already exists today
-            const existingIssues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'version-check-failure',
-              per_page: 10
-            });
-
-            const todayIssue = existingIssues.data.find(i => i.title === title);
-            if (todayIssue) {
-              // Add comment to existing issue
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: todayIssue.number,
-                body: `Another failure occurred.\n\n**Run:** ${runUrl}`
-              });
-            } else {
-              // Create new issue
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: title,
-                body: `The automated version check workflow failed.\n\n**Run:** ${runUrl}\n\nPlease investigate the failure.`,
-                labels: ['version-check-failure', 'automated']
-              });
-            }
+      - name: Summarize failure
+        run: |
+          echo '## Version check failed' >> "$GITHUB_STEP_SUMMARY"
+          echo "[Open this workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)." >> "$GITHUB_STEP_SUMMARY"
 
   apply-updates:
     needs: check-versions
@@ -354,7 +320,8 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      actions: write
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -474,65 +441,25 @@ jobs:
           git commit -m "$COMMIT_SUMMARY" -m "$COMMIT_DETAILS"
           echo "committed=true" >> "$GITHUB_OUTPUT"
 
-      # Generating a GitHub token, so that commits created by the
-      # action can trigger the registry publication workflow.
-      - name: Generate GitHub token
-        if: steps.commit.outputs.committed == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        id: generate-token
-        with:
-          # GitHub App ID secret name
-          app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
-          # GitHub App private key secret name
-          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
-
       - name: Push updates to main
         if: steps.commit.outputs.committed == 'true'
         env:
-          GH_APP_TOKEN: ${{ steps.generate-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_APP_TOKEN" | base64 | tr -d '\n')"
-          echo "::add-mask::$AUTH_HEADER"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_HEADER}" push origin main
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+
+      - name: Publish updated registry
+        if: steps.commit.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build-registry.yml --ref main
 
   notify-apply-failure:
     needs: [check-versions, apply-updates, verify-updates, commit-updates]
     if: always() && (needs.apply-updates.result == 'failure' || needs.verify-updates.result == 'failure' || needs.commit-updates.result == 'failure')
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
     steps:
-      - name: Create failure issue
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        with:
-          script: |
-            const title = `Version update failed - ${new Date().toISOString().split('T')[0]}`;
-            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-
-            // Check if issue already exists today
-            const existingIssues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'version-update-failure',
-              per_page: 10
-            });
-
-            const todayIssue = existingIssues.data.find(i => i.title === title);
-            if (todayIssue) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: todayIssue.number,
-                body: `Another failure occurred.\n\n**Run:** ${runUrl}`
-              });
-            } else {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: title,
-                body: `The automated version update workflow failed while applying updates.\n\nThis could be due to:\n- Registry validation failure\n- Auth verification failure\n- Git push conflict\n- Network issues\n\n**Run:** ${runUrl}\n\nPlease investigate.`,
-                labels: ['version-update-failure', 'automated']
-              });
-            }
+      - name: Summarize failure
+        run: |
+          echo '## Version update failed' >> "$GITHUB_STEP_SUMMARY"
+          echo "[Open this workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)." >> "$GITHUB_STEP_SUMMARY"
